@@ -1,0 +1,100 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  cbl-workflow
+
+  Sample SAM Template for cbl-workflow
+
+Globals:
+  Function:
+    Runtime: nodejs16.x
+    Tracing: 'Active'
+
+Resources:
+
+  DocumentBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+
+  DocumentTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      PrimaryKey:
+        Name: DocumentID
+        Type: String
+  
+  GetDocumentMetadataFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/document-metadata/
+      Handler: index.handler
+      Policies:
+        - S3CrudPolicy:
+            BucketName: 
+              !Ref DocumentBucket
+
+  GetTextDetectionResultsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/detection-results/
+      Handler: index.handler
+      Policies:
+        - TextractPolicy: {}
+
+  InsertDocumentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/insert-document/
+      Handler: index.handler
+      Environment:
+        Variables:
+          DYNAMO_DB_TABLE: !Ref DocumentTable
+      Policies:
+        - TextractPolicy: {}
+        - DynamoDBWritePolicy:
+            TableName: !Ref DocumentTable
+
+  DocumentProcessingSM:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: statemachine/document_processing.asl.json
+      DefinitionSubstitutions:
+        GetDocumentMetadataFunctionArn: !GetAtt GetDocumentMetadataFunction.Arn
+        GetTextDetectionResultsFunctionArn: !GetAtt GetTextDetectionResultsFunction.Arn
+        InsertDocumentFunctionArn: !GetAtt InsertDocumentFunction.Arn
+      Policies: 
+        - LambdaInvokePolicy:
+            FunctionName: !Ref GetDocumentMetadataFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref GetTextDetectionResultsFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref InsertDocumentFunction
+        - S3CrudPolicy:
+            BucketName: 
+              !Ref DocumentBucket
+        - TextractPolicy: {}
+      Events:
+        DocumentUploadedEvent:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source:
+                - "aws.s3"
+              detail-type: 
+                - "Object Created"
+              detail:
+                bucket: 
+                  name:
+                    - !Ref DocumentBucket
+
+Outputs:
+
+  DocumentBucketName:
+    Description: "Document Bucket Name"
+    Value: !Ref DocumentBucket
+  DocumentTable:
+    Description: "Document Table Name"
+    Value: !Ref DocumentTable
